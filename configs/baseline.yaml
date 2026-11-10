@@ -1,0 +1,21 @@
+project:
+  seed: 42
+  image_size: 224
+  class_names:
+    - glioma
+    - meningioma
+    - pituitary
+    - notumor
+
+training:
+  batch_size: 32
+  epochs: 30
+  learning_rate: 0.001
+  dropout: 0.3
+  num_workers: 0
+
+paths:
+  raw_data: data/raw
+  processed_data: data/processed
+  checkpoints: models
+  figures: reports/figures
