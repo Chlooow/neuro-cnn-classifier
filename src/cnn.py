@@ -1,0 +1,1 @@
+# pour le modele cnn : entrainement, évaluation, prédiction
