@@ -1,0 +1,1 @@
+# makefile pour lancer 1 commande pour tout c'est pas mal pratique
