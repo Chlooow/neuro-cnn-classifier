@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+.streamlit/secrets.toml
+
+# Dataset and generated data
+data/raw/**
+!data/raw/.gitkeep
+data/interim/**
+!data/interim/.gitkeep
+data/processed/**
+!data/processed/.gitkeep
+data/external/**
+!data/external/.gitkeep
+
+# Generated model weights and reports
+models/**
+!models/.gitkeep
+reports/**
+!reports/figures/.gitkeep
