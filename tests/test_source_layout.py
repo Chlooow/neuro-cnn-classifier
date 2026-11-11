@@ -1,11 +1,24 @@
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = PROJECT_ROOT / "src"
 
 
-def test_source_directories_are_under_src():
-    source_root = PROJECT_ROOT / "src"
+def test_source_files_are_under_src():
+    for name in [
+        "load_data.py",
+        "cnn.py",
+        "optimize.py",
+        "grad_cam.py",
+        "report_pdf.py",
+        "utils.py",
+        "main.py",
+    ]:
+        assert (SOURCE_ROOT / name).is_file(), name
 
-    assert (source_root / "app.py").is_file()
-    assert (source_root / "data").is_dir()
-    assert not (source_root / "neuro_cnn_classifier").exists()
+    assert (SOURCE_ROOT / "streamlit" / "app.py").is_file()
+
+
+def test_no_python_package_outside_src():
+    assert not (PROJECT_ROOT / "data" / "__init__.py").exists()
+    assert not (PROJECT_ROOT / "reporting").exists()

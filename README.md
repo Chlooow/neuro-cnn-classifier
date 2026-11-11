@@ -9,7 +9,7 @@ Prérequis : Python 3.11 ou 3.12 et [uv](https://docs.astral.sh/uv/).
 ```powershell
 uv sync --group dev
 uv run pytest
-uv run streamlit run src/app.py
+uv run streamlit run src/streamlit/app.py
 ```
 
 Le guide [docs/uv-guide.md](docs/uv-guide.md) explique les commandes et le fonctionnement de `uv` pour le binôme.
@@ -33,13 +33,14 @@ Télécharger le dataset « Brain Tumor MRI Dataset » depuis [Kaggle](https://w
 |-- notebooks/                # exploration et analyses exploratoires
 |-- reports/figures/          # courbes, matrices de confusion, Grad-CAM
 |-- src/
-|   |-- data/                 # chargement et préparation des images
-|   |-- models/               # architecture CNN
-|   |-- training/             # entraînement et optimisation
-|   |-- evaluation/           # métriques et visualisations
-|   |-- explainability/       # Grad-CAM (bonus)
-|   |-- reporting/            # génération de rapport PDF
-|   `-- app.py                # interface Streamlit
+|   |-- load_data.py          # téléchargement et prétraitement des images
+|   |-- cnn.py                # architecture CNN, entraînement, évaluation
+|   |-- optimize.py           # optimisation des hyperparamètres (Optuna)
+|   |-- grad_cam.py           # Grad-CAM (bonus)
+|   |-- report_pdf.py         # génération du rapport PDF
+|   |-- utils.py              # fonctions utilitaires
+|   |-- main.py               # point d'entrée en ligne de commande
+|   `-- streamlit/app.py      # interface Streamlit
 |-- tests/
 |-- pyproject.toml            # projet, dépendances et outils
 `-- uv.lock                  # versions exactes résolues par uv
