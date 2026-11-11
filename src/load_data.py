@@ -1,9 +1,257 @@
-# sert à charger le jeu de données Brain Tumor MRI depuis Kaggle via kagglehub
-import os
-import pathlib
-import kagglehub
+"""Chargement et prétraitement du dataset Brain Tumor MRI (étape 1 du sujet).
 
-def load_brain_tumor_data() -> pathlib.Path:
-    """Télécharge le jeu de données Brain Tumor MRI via kagglehub et retourne son chemin d'accès."""
-    dataset_path = kagglehub.dataset_download("masoudnickparvar/brain-tumor-mri-dataset")
-    return pathlib.Path(dataset_path)
+Pipeline appliqué à chaque image (identique à l'entraînement et dans l'application) :
+    1. lecture en niveaux de gris (les IRM sont monochromes, même celles stockées en RGB)
+    2. recadrage sur le cerveau (suppression des bords noirs)
+    3. ajout de bandes noires pour rendre l'image carrée (pas de déformation)
+    4. redimensionnement à une taille fixe (IMAGE_SIZE x IMAGE_SIZE)
+    5. passage en [0, 1] puis standardisation avec la moyenne / l'écart-type du train
+
+Les étapes 1 à 4 sont faites une seule fois et mises en cache dans data/processed/
+(tableau uint8), ce qui rend chaque epoch beaucoup plus rapide.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import torch
+from PIL import Image
+from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import v2
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+KAGGLE_DATASET = "masoudnickparvar/brain-tumor-mri-dataset"
+
+# Ordre alphabétique = ordre des dossiers = ordre des sorties du modèle.
+# C'est la seule source de vérité pour l'ordre des classes (modèle, appli, PDF).
+CLASS_NAMES = ["glioma", "meningioma", "notumor", "pituitary"]
+
+
+# --------------------------------------------------------------------------- #
+# Localisation du dataset
+# --------------------------------------------------------------------------- #
+def load_brain_tumor_data() -> Path:
+    """Télécharge le dataset via kagglehub (en cache après le 1er appel), renvoie son chemin."""
+    import kagglehub
+
+    return Path(kagglehub.dataset_download(KAGGLE_DATASET))
+
+
+def find_dataset_root() -> Path:
+    """Renvoie le dossier contenant Training/ et Testing/.
+
+    Utilise data/raw/ si le dataset y a été copié à la main, sinon le télécharge.
+    """
+    raw = PROJECT_ROOT / "data" / "raw"
+    if (raw / "Training").is_dir() and (raw / "Testing").is_dir():
+        return raw
+    return load_brain_tumor_data()
+
+
+def list_images(root: Path, split: str) -> tuple[list[Path], np.ndarray]:
+    """Liste les images d'un split ('Training' ou 'Testing') et leurs labels (indices de classe)."""
+    paths, labels = [], []
+    for label, name in enumerate(CLASS_NAMES):
+        files = sorted((root / split / name).glob("*.jpg"))
+        paths += files
+        labels += [label] * len(files)
+    return paths, np.array(labels, dtype=np.int64)
+
+
+def remove_duplicates(paths: list[Path], labels: np.ndarray) -> tuple[list[Path], np.ndarray]:
+    """Supprime les doublons exacts (même contenu de fichier), en gardant la 1re occurrence.
+
+    Sans ça, une même image pourrait se retrouver à la fois en train et en validation,
+    ce qui surestimerait la performance en validation.
+    """
+    seen, keep = set(), []
+    for i, p in enumerate(paths):
+        h = hashlib.md5(p.read_bytes()).hexdigest()
+        if h not in seen:
+            seen.add(h)
+            keep.append(i)
+    return [paths[i] for i in keep], labels[keep]
+
+
+# --------------------------------------------------------------------------- #
+# Prétraitement d'une image
+# --------------------------------------------------------------------------- #
+def crop_brain(gray: np.ndarray, threshold: int = 20, margin: int = 4) -> np.ndarray:
+    """Recadre l'image sur la zone non noire (le crâne), pour ne pas gaspiller de pixels en fond."""
+    mask = gray > threshold
+    if mask.sum() < 0.05 * mask.size:  # image presque noire : on ne touche à rien
+        return gray
+    rows, cols = np.where(mask.any(axis=1))[0], np.where(mask.any(axis=0))[0]
+    r0, r1 = max(rows[0] - margin, 0), min(rows[-1] + margin + 1, gray.shape[0])
+    c0, c1 = max(cols[0] - margin, 0), min(cols[-1] + margin + 1, gray.shape[1])
+    return gray[r0:r1, c0:c1]
+
+
+def pad_to_square(gray: np.ndarray) -> np.ndarray:
+    """Ajoute des bandes noires pour obtenir une image carrée (garde les proportions)."""
+    h, w = gray.shape
+    size = max(h, w)
+    out = np.zeros((size, size), dtype=gray.dtype)
+    top, left = (size - h) // 2, (size - w) // 2
+    out[top : top + h, left : left + w] = gray
+    return out
+
+
+def prepare_image(image: Image.Image | str | Path, image_size: int) -> np.ndarray:
+    """Étapes 1 à 4 : PIL/chemin -> tableau uint8 (image_size, image_size)."""
+    if not isinstance(image, Image.Image):
+        image = Image.open(image)
+    gray = np.asarray(image.convert("L"))
+    square = pad_to_square(crop_brain(gray))
+    resized = Image.fromarray(square).resize((image_size, image_size), Image.BILINEAR)
+    return np.asarray(resized, dtype=np.uint8)
+
+
+def normalize(x: torch.Tensor, mean: float, std: float) -> torch.Tensor:
+    """Étape 5 : uint8 [0, 255] -> float standardisé (moyenne 0, écart-type 1 sur le train)."""
+    return (x.float() / 255.0 - mean) / std
+
+
+def preprocess_for_inference(image: Image.Image, stats: dict) -> torch.Tensor:
+    """Image PIL -> tenseur (1, 1, H, W) prêt pour model(x). À utiliser dans l'appli Streamlit."""
+    arr = prepare_image(image, stats["image_size"])
+    return normalize(torch.from_numpy(arr), stats["mean"], stats["std"])[None, None]
+
+
+# --------------------------------------------------------------------------- #
+# Cache sur disque
+# --------------------------------------------------------------------------- #
+@dataclass
+class PreparedData:
+    x_train: np.ndarray
+    y_train: np.ndarray
+    x_val: np.ndarray
+    y_val: np.ndarray
+    x_test: np.ndarray
+    y_test: np.ndarray
+    stats: dict  # image_size, mean, std, class_names, tailles des splits
+
+    @property
+    def test_paths(self) -> list[str]:
+        return self.stats["test_paths"]
+
+
+def _cache_path(image_size: int) -> Path:
+    return PROJECT_ROOT / "data" / "processed" / f"mri_{image_size}.npz"
+
+
+def stats_path() -> Path:
+    return PROJECT_ROOT / "data" / "processed" / "stats.json"
+
+
+def prepare_dataset(
+    image_size: int = 224, val_size: float = 0.15, seed: int = 42, force: bool = False
+) -> PreparedData:
+    """Prépare (ou relit depuis le cache) les jeux train / validation / test.
+
+    - Train + validation viennent de Training/ (doublons retirés, découpage stratifié).
+    - Test = Testing/ tel quel : il n'est utilisé qu'à la toute fin (étape 4).
+    - mean / std sont calculés sur le train uniquement (pas de fuite d'information).
+    """
+    cache = _cache_path(image_size)
+    if cache.exists() and not force:
+        d = np.load(cache, allow_pickle=False)
+        stats = json.loads(stats_path().read_text(encoding="utf-8"))
+        if stats.get("image_size") == image_size and stats.get("seed") == seed:
+            return PreparedData(*(d[k] for k in ["x_train", "y_train", "x_val", "y_val",
+                                                  "x_test", "y_test"]), stats=stats)
+
+    root = find_dataset_root()
+    train_paths, train_labels = list_images(root, "Training")
+    n_before = len(train_paths)
+    train_paths, train_labels = remove_duplicates(train_paths, train_labels)
+    test_paths, test_labels = list_images(root, "Testing")
+
+    tr_p, va_p, y_tr, y_va = train_test_split(
+        train_paths, train_labels, test_size=val_size, stratify=train_labels, random_state=seed
+    )
+
+    def load(paths):
+        return np.stack([prepare_image(p, image_size) for p in paths])
+
+    x_tr, x_va, x_te = load(tr_p), load(va_p), load(test_paths)
+    scaled = x_tr.astype(np.float32) / 255.0
+    stats = {
+        "image_size": image_size,
+        "channels": 1,
+        "mean": float(scaled.mean()),
+        "std": float(scaled.std()),
+        "class_names": CLASS_NAMES,
+        "seed": seed,
+        "val_size": val_size,
+        "n_train_raw": n_before,
+        "n_duplicates_removed": n_before - len(train_paths),
+        "n_train": len(tr_p),
+        "n_val": len(va_p),
+        "n_test": len(test_paths),
+        "test_paths": [str(p.relative_to(root)) for p in test_paths],
+    }
+
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(cache, x_train=x_tr, y_train=y_tr, x_val=x_va, y_val=y_va,
+             x_test=x_te, y_test=test_labels)
+    stats_path().write_text(json.dumps(stats, indent=2), encoding="utf-8")
+    return PreparedData(x_tr, y_tr, x_va, y_va, x_te, test_labels, stats)
+
+
+# --------------------------------------------------------------------------- #
+# Dataset PyTorch + DataLoaders
+# --------------------------------------------------------------------------- #
+def train_augmentation() -> v2.Transform:
+    """Augmentations légères, réalistes pour des IRM, appliquées au train uniquement.
+
+    - flip horizontal : le cerveau est à peu près symétrique gauche/droite et une tumeur
+      peut être d'un côté comme de l'autre (pas de flip vertical : non réaliste)
+    - petite rotation / translation / zoom : variations de positionnement du patient
+    - léger changement de luminosité / contraste : variations entre machines IRM
+    """
+    return v2.Compose([
+        v2.RandomHorizontalFlip(p=0.5),
+        v2.RandomAffine(degrees=10, translate=(0.05, 0.05), scale=(0.95, 1.05)),
+        v2.ColorJitter(brightness=0.1, contrast=0.1),
+    ])
+
+
+class MRIDataset(Dataset):
+    def __init__(self, x: np.ndarray, y: np.ndarray, mean: float, std: float,
+                 augment: bool = False):
+        self.x = torch.from_numpy(x)  # (N, H, W) uint8
+        self.y = torch.from_numpy(y)
+        self.mean, self.std = mean, std
+        self.transform = train_augmentation() if augment else None
+
+    def __len__(self) -> int:
+        return len(self.y)
+
+    def __getitem__(self, i: int):
+        img = self.x[i].unsqueeze(0)  # (1, H, W)
+        if self.transform is not None:
+            img = self.transform(img)
+        return normalize(img, self.mean, self.std), self.y[i]
+
+
+def get_dataloaders(data: PreparedData, batch_size: int = 32, augment: bool = True,
+                    num_workers: int = 0, seed: int = 42):
+    """Renvoie (train_loader, val_loader, test_loader)."""
+    m, s = data.stats["mean"], data.stats["std"]
+    g = torch.Generator().manual_seed(seed)
+    pin = torch.cuda.is_available()
+    train = DataLoader(MRIDataset(data.x_train, data.y_train, m, s, augment=augment),
+                       batch_size=batch_size, shuffle=True, generator=g,
+                       num_workers=num_workers, pin_memory=pin)
+    val = DataLoader(MRIDataset(data.x_val, data.y_val, m, s), batch_size=batch_size,
+                     num_workers=num_workers, pin_memory=pin)
+    test = DataLoader(MRIDataset(data.x_test, data.y_test, m, s), batch_size=batch_size,
+                      num_workers=num_workers, pin_memory=pin)
+    return train, val, test
