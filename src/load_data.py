@@ -1,13 +1,12 @@
 """Chargement et prétraitement du dataset Brain Tumor MRI (étape 1 du sujet).
 
 Pipeline appliqué à chaque image (identique à l'entraînement et dans l'application) :
-    1. lecture en niveaux de gris (les IRM sont monochromes, même celles stockées en RGB)
+    1. passage en niveaux de gris, 1 canal (les IRM sont monochromes)
     2. recadrage sur le cerveau (suppression des bords noirs)
-    3. ajout de bandes noires pour rendre l'image carrée (pas de déformation)
-    4. redimensionnement à une taille fixe (IMAGE_SIZE x IMAGE_SIZE)
-    5. passage en [0, 1] puis standardisation avec la moyenne / l'écart-type du train
+    3. redimensionnement à IMAGE_SIZE x IMAGE_SIZE avec bandes noires (pas de déformation)
+    4. passage en [0, 1] puis standardisation avec la moyenne / l'écart-type du train
 
-Les étapes 1 à 4 sont faites une seule fois et mises en cache dans data/processed/
+Les étapes 1 à 3 sont faites une seule fois et mises en cache dans data/processed/
 (tableau uint8), ce qui rend chaque epoch beaucoup plus rapide.
 """
 
@@ -20,9 +19,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
+from torchvision.datasets import ImageFolder
 from torchvision.transforms import v2
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +34,7 @@ CLASS_NAMES = ["glioma", "meningioma", "notumor", "pituitary"]
 
 
 # --------------------------------------------------------------------------- #
-# Localisation du dataset
+# Lecture du dataset
 # --------------------------------------------------------------------------- #
 def load_brain_tumor_data() -> Path:
     """Télécharge le dataset via kagglehub (en cache après le 1er appel), renvoie son chemin."""
@@ -43,25 +43,14 @@ def load_brain_tumor_data() -> Path:
     return Path(kagglehub.dataset_download(KAGGLE_DATASET))
 
 
-def find_dataset_root() -> Path:
-    """Renvoie le dossier contenant Training/ et Testing/.
-
-    Utilise data/raw/ si le dataset y a été copié à la main, sinon le télécharge.
-    """
-    raw = PROJECT_ROOT / "data" / "raw"
-    if (raw / "Training").is_dir() and (raw / "Testing").is_dir():
-        return raw
-    return load_brain_tumor_data()
-
-
 def list_images(root: Path, split: str) -> tuple[list[Path], np.ndarray]:
-    """Liste les images d'un split ('Training' ou 'Testing') et leurs labels (indices de classe)."""
-    paths, labels = [], []
-    for label, name in enumerate(CLASS_NAMES):
-        files = sorted((root / split / name).glob("*.jpg"))
-        paths += files
-        labels += [label] * len(files)
-    return paths, np.array(labels, dtype=np.int64)
+    """Liste les images d'un split ('Training' ou 'Testing') et leurs labels (indices de classe).
+
+    ImageFolder déduit la classe du nom du dossier, dans l'ordre alphabétique.
+    """
+    folder = ImageFolder(root / split)
+    assert folder.classes == CLASS_NAMES, folder.classes
+    return [Path(p) for p, _ in folder.samples], np.array(folder.targets, dtype=np.int64)
 
 
 def remove_duplicates(paths: list[Path], labels: np.ndarray) -> tuple[list[Path], np.ndarray]:
@@ -93,35 +82,26 @@ def crop_brain(gray: np.ndarray, threshold: int = 20, margin: int = 4) -> np.nda
     return gray[r0:r1, c0:c1]
 
 
-def pad_to_square(gray: np.ndarray) -> np.ndarray:
-    """Ajoute des bandes noires pour obtenir une image carrée (garde les proportions)."""
-    h, w = gray.shape
-    size = max(h, w)
-    out = np.zeros((size, size), dtype=gray.dtype)
-    top, left = (size - h) // 2, (size - w) // 2
-    out[top : top + h, left : left + w] = gray
-    return out
-
-
 def prepare_image(image: Image.Image | str | Path, image_size: int) -> np.ndarray:
-    """Étapes 1 à 4 : PIL/chemin -> tableau uint8 (image_size, image_size)."""
+    """Étapes 1 à 3 : image PIL ou chemin -> tableau uint8 (image_size, image_size)."""
     if not isinstance(image, Image.Image):
         image = Image.open(image)
     gray = np.asarray(image.convert("L"))
-    square = pad_to_square(crop_brain(gray))
-    resized = Image.fromarray(square).resize((image_size, image_size), Image.BILINEAR)
-    return np.asarray(resized, dtype=np.uint8)
+    cropped = Image.fromarray(crop_brain(gray))
+    # ImageOps.pad : redimensionne sans déformer, puis complète avec du noir (color=0)
+    square = ImageOps.pad(cropped, (image_size, image_size), method=Image.BILINEAR, color=0)
+    return np.array(square, dtype=np.uint8)
 
 
-def normalize(x: torch.Tensor, mean: float, std: float) -> torch.Tensor:
-    """Étape 5 : uint8 [0, 255] -> float standardisé (moyenne 0, écart-type 1 sur le train)."""
-    return (x.float() / 255.0 - mean) / std
+def normalization(mean: float, std: float) -> v2.Transform:
+    """Étape 4 : uint8 [0, 255] -> float [0, 1] -> standardisé (moyenne 0, écart-type 1)."""
+    return v2.Compose([v2.ToDtype(torch.float32, scale=True), v2.Normalize([mean], [std])])
 
 
 def preprocess_for_inference(image: Image.Image, stats: dict) -> torch.Tensor:
     """Image PIL -> tenseur (1, 1, H, W) prêt pour model(x). À utiliser dans l'appli Streamlit."""
-    arr = prepare_image(image, stats["image_size"])
-    return normalize(torch.from_numpy(arr), stats["mean"], stats["std"])[None, None]
+    arr = torch.from_numpy(prepare_image(image, stats["image_size"]))[None]  # (1, H, W)
+    return normalization(stats["mean"], stats["std"])(arr)[None]
 
 
 # --------------------------------------------------------------------------- #
@@ -136,10 +116,6 @@ class PreparedData:
     x_test: np.ndarray
     y_test: np.ndarray
     stats: dict  # image_size, mean, std, class_names, tailles des splits
-
-    @property
-    def test_paths(self) -> list[str]:
-        return self.stats["test_paths"]
 
 
 def _cache_path(image_size: int) -> Path:
@@ -160,14 +136,14 @@ def prepare_dataset(
     - mean / std sont calculés sur le train uniquement (pas de fuite d'information).
     """
     cache = _cache_path(image_size)
-    if cache.exists() and not force:
+    if cache.exists() and stats_path().exists() and not force:
         d = np.load(cache, allow_pickle=False)
         stats = json.loads(stats_path().read_text(encoding="utf-8"))
         if stats.get("image_size") == image_size and stats.get("seed") == seed:
             return PreparedData(*(d[k] for k in ["x_train", "y_train", "x_val", "y_val",
                                                   "x_test", "y_test"]), stats=stats)
 
-    root = find_dataset_root()
+    root = load_brain_tumor_data()
     train_paths, train_labels = list_images(root, "Training")
     n_before = len(train_paths)
     train_paths, train_labels = remove_duplicates(train_paths, train_labels)
@@ -224,21 +200,20 @@ def train_augmentation() -> v2.Transform:
 
 
 class MRIDataset(Dataset):
+    """Renvoie (image (1, H, W) normalisée, label), avec augmentation optionnelle."""
+
     def __init__(self, x: np.ndarray, y: np.ndarray, mean: float, std: float,
                  augment: bool = False):
-        self.x = torch.from_numpy(x)  # (N, H, W) uint8
+        self.x = torch.from_numpy(x).unsqueeze(1)  # (N, H, W) -> (N, 1, H, W), uint8
         self.y = torch.from_numpy(y)
-        self.mean, self.std = mean, std
-        self.transform = train_augmentation() if augment else None
+        steps = [train_augmentation()] if augment else []
+        self.transform = v2.Compose(steps + [normalization(mean, std)])
 
     def __len__(self) -> int:
         return len(self.y)
 
     def __getitem__(self, i: int):
-        img = self.x[i].unsqueeze(0)  # (1, H, W)
-        if self.transform is not None:
-            img = self.transform(img)
-        return normalize(img, self.mean, self.std), self.y[i]
+        return self.transform(self.x[i]), self.y[i]
 
 
 def get_dataloaders(data: PreparedData, batch_size: int = 32, augment: bool = True,
@@ -246,12 +221,10 @@ def get_dataloaders(data: PreparedData, batch_size: int = 32, augment: bool = Tr
     """Renvoie (train_loader, val_loader, test_loader)."""
     m, s = data.stats["mean"], data.stats["std"]
     g = torch.Generator().manual_seed(seed)
-    pin = torch.cuda.is_available()
+    opts = dict(batch_size=batch_size, num_workers=num_workers,
+                pin_memory=torch.cuda.is_available())
     train = DataLoader(MRIDataset(data.x_train, data.y_train, m, s, augment=augment),
-                       batch_size=batch_size, shuffle=True, generator=g,
-                       num_workers=num_workers, pin_memory=pin)
-    val = DataLoader(MRIDataset(data.x_val, data.y_val, m, s), batch_size=batch_size,
-                     num_workers=num_workers, pin_memory=pin)
-    test = DataLoader(MRIDataset(data.x_test, data.y_test, m, s), batch_size=batch_size,
-                      num_workers=num_workers, pin_memory=pin)
+                       shuffle=True, generator=g, **opts)
+    val = DataLoader(MRIDataset(data.x_val, data.y_val, m, s), **opts)
+    test = DataLoader(MRIDataset(data.x_test, data.y_test, m, s), **opts)
     return train, val, test
