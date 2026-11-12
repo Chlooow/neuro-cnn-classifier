@@ -1,13 +1,4 @@
 """Chargement et prétraitement du dataset Brain Tumor MRI (étape 1 du sujet).
-
-Pipeline appliqué à chaque image (identique à l'entraînement et dans l'application) :
-    1. passage en niveaux de gris, 1 canal (les IRM sont monochromes)
-    2. recadrage sur le cerveau (suppression des bords noirs)
-    3. redimensionnement à IMAGE_SIZE x IMAGE_SIZE avec bandes noires (pas de déformation)
-    4. passage en [0, 1] puis standardisation avec la moyenne / l'écart-type du train
-
-Les étapes 1 à 3 sont faites une seule fois et mises en cache dans data/processed/
-(tableau uint8), ce qui rend chaque epoch beaucoup plus rapide.
 """
 
 from __future__ import annotations
