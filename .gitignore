@@ -8,6 +8,8 @@ dist/
 *.egg-info/
 .streamlit/secrets.toml
 
+reports\figures\gradcam_test.png
+
 # Dataset and generated data
 data/raw/**
 !data/raw/.gitkeep
