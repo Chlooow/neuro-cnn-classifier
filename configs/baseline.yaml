@@ -1,0 +1,24 @@
+project:
+  seed: 42
+  image_size: 224        # 512 px pour la plupart des images ; 224 garde les petites tumeurs visibles
+  channels: 1            # IRM en niveaux de gris
+  val_size: 0.15         # part de Training/ réservée à la validation (callbacks, Optuna)
+  class_names:           # ordre alphabétique = ordre des sorties du modèle
+    - glioma
+    - meningioma
+    - notumor
+    - pituitary
+
+training:
+  batch_size: 32
+  epochs: 30
+  learning_rate: 0.001
+  dropout: 0.3
+  augment: true
+  num_workers: 0
+
+paths:
+  raw_data: data/raw
+  processed_data: data/processed
+  checkpoints: models
+  figures: reports/figures
