@@ -59,6 +59,31 @@ def remove_duplicates(paths: list[Path], labels: np.ndarray) -> tuple[list[Path]
     return [paths[i] for i in keep], labels[keep]
 
 
+def near_duplicates(x: np.ndarray, ref: np.ndarray | None = None,
+                    threshold: float = 0.02) -> np.ndarray:
+    """Repère les images quasi identiques (même IRM enregistrée à une autre taille, etc.).
+
+    On compare des miniatures 32x32 : la distance est l'écart moyen entre pixels (0 à 1).
+    Sous 0.02, c'est la même image (vérifié à l'œil) ; au-dessus, ce sont des coupes voisines.
+    - ref donné : True si l'image de x a une quasi-copie dans ref
+    - ref absent : True si l'image a une quasi-copie plus tôt dans x (on garde la 1re)
+    """
+    def thumbs(a):
+        t = torch.from_numpy(a).float().unsqueeze(1) / 255
+        return torch.nn.functional.adaptive_avg_pool2d(t, 32).flatten(1)
+
+    a = thumbs(x)
+    b = a if ref is None else thumbs(ref)
+    dup = np.zeros(len(a), dtype=bool)
+    for s in range(0, len(a), 512):
+        d = torch.cdist(a[s:s + 512], b) / 32
+        if ref is None:  # on ne compare qu'aux images précédentes
+            rows = torch.arange(s, s + len(d))[:, None]
+            d[torch.arange(len(b))[None, :] >= rows] = 1.0
+        dup[s:s + len(d)] = (d.min(dim=1).values < threshold).numpy()
+    return dup
+
+
 # --------------------------------------------------------------------------- #
 # Prétraitement d'une image
 # --------------------------------------------------------------------------- #
@@ -130,7 +155,8 @@ def prepare_dataset(
     if cache.exists() and stats_path().exists() and not force:
         d = np.load(cache, allow_pickle=False)
         stats = json.loads(stats_path().read_text(encoding="utf-8"))
-        if stats.get("image_size") == image_size and stats.get("seed") == seed:
+        same = stats.get("image_size") == image_size and stats.get("seed") == seed
+        if same and "n_near_test_removed" in stats:  # sinon : ancien cache, on refait
             return PreparedData(*(d[k] for k in ["x_train", "y_train", "x_val", "y_val",
                                                   "x_test", "y_test"]), stats=stats)
 
@@ -140,14 +166,23 @@ def prepare_dataset(
     train_paths, train_labels = remove_duplicates(train_paths, train_labels)
     test_paths, test_labels = list_images(root, "Testing")
 
-    tr_p, va_p, y_tr, y_va = train_test_split(
-        train_paths, train_labels, test_size=val_size, stratify=train_labels, random_state=seed
-    )
-
     def load(paths):
         return np.stack([prepare_image(p, image_size) for p in paths])
 
-    x_tr, x_va, x_te = load(tr_p), load(va_p), load(test_paths)
+    x_all, x_te = load(train_paths), load(test_paths)
+    # quasi-doublons : on retire de Training les copies d'images du test (fuite vers le test)
+    # puis les copies internes (fuite train -> validation). Le test officiel reste intact.
+    in_test = near_duplicates(x_all, x_te)
+    keep = ~in_test
+    keep[keep] = ~near_duplicates(x_all[keep])
+    x_all, train_labels = x_all[keep], train_labels[keep]
+    train_paths = [p for p, k in zip(train_paths, keep) if k]
+
+    idx = np.arange(len(train_paths))
+    i_tr, i_va = train_test_split(idx, test_size=val_size, stratify=train_labels,
+                                  random_state=seed)
+    tr_p, va_p = [train_paths[i] for i in i_tr], [train_paths[i] for i in i_va]
+    x_tr, y_tr, x_va, y_va = x_all[i_tr], train_labels[i_tr], x_all[i_va], train_labels[i_va]
     scaled = x_tr.astype(np.float32) / 255.0
     stats = {
         "image_size": image_size,
@@ -158,7 +193,9 @@ def prepare_dataset(
         "seed": seed,
         "val_size": val_size,
         "n_train_raw": n_before,
-        "n_duplicates_removed": n_before - len(train_paths),
+        "n_duplicates_removed": n_before - len(keep),
+        "n_near_test_removed": int(in_test.sum()),
+        "n_near_duplicates_removed": int((~in_test).sum() - keep.sum()),
         "n_train": len(tr_p),
         "n_val": len(va_p),
         "n_test": len(test_paths),

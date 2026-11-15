@@ -21,7 +21,9 @@ def main() -> None:
         data = prepare_dataset(cfg["image_size"], cfg["val_size"], cfg["seed"], force=args.force)
         s = data.stats
         print(f"train={s['n_train']}  val={s['n_val']}  test={s['n_test']}  "
-              f"(doublons retirés : {s['n_duplicates_removed']})")
+              f"(retirés : {s['n_duplicates_removed']} doublons, "
+              f"{s['n_near_test_removed']} copies d'images du test, "
+              f"{s['n_near_duplicates_removed']} quasi-doublons)")
         print(f"mean={s['mean']:.4f}  std={s['std']:.4f}  taille={s['image_size']}px")
 
 
