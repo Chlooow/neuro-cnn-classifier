@@ -6,6 +6,14 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RL
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
+def _scaled_image(path, max_width, max_height):
+    """Image ReportLab qui tient dans (max_width, max_height) en gardant son ratio."""
+    with Image.open(path) as im:
+        w, h = im.size
+    scale = min(max_width / w, max_height / h)
+    return RLImage(path, width=w * scale, height=h * scale)
+
+
 def generate_medical_pdf(
     patient_id: str,
     pred_class: str,
@@ -13,7 +21,9 @@ def generate_medical_pdf(
     original_img_path: str,
     heatmap_img_path: str = None,
     notes: str = "",
-    include_options: dict = None
+    include_options: dict = None,
+    model_info: dict = None,
+    heatmap_class: str = None
 ) -> bytes:
     """Génère un rapport PDF médical personnalisé en mémoire sous forme de bytes."""
     if include_options is None:
@@ -65,13 +75,13 @@ def generate_medical_pdf(
     )
 
     # En-tête du Rapport
-    story.append(Paragraph("🧠 CerebroAI — Rapport d'Analyse IRM", title_style))
+    story.append(Paragraph("CerebroAI — Rapport d'Analyse IRM", title_style))
     date_str = datetime.datetime.now().strftime("%d/%m/%Y à %H:%M")
     
     if include_options.get("patient_info"):
         info_data = [
             [Paragraph(f"<b>Identifiant Patient :</b> {patient_id}", body_style), Paragraph(f"<b>Date d'Analyse :</b> {date_str}", body_style)],
-            [Paragraph(f"<b>Diagnostic Estimé :</b> <font color='#047857'><b>{pred_class.upper()}</b></font>", body_style), Paragraph("<b>Modèle :</b> CNN Optimized v1.0", body_style)]
+            [Paragraph(f"<b>Diagnostic Estimé :</b> <font color='#047857'><b>{pred_class.upper()}</b></font>", body_style), Paragraph("<b>Modèle :</b> CNN optimisé (Optuna)", body_style)]
         ]
         info_table = Table(info_data, colWidths=[270, 270])
         info_table.setStyle(TableStyle([
@@ -86,20 +96,22 @@ def generate_medical_pdf(
     # Section Imagerie 
     story.append(Paragraph("1. Imagerie Clinique & Diagnostic Visuel", header_style))
     
-    img_width, img_height = 200, 200
-    images_row = []
-    
+    # les images tiennent dans une boîte de 240x240 : on garde leur ratio (pas de déformation)
+    max_side = 240
+
     # Image originale
-    img_orig = RLImage(original_img_path, width=img_width, height=img_height)
-    images_row.append([img_orig, Paragraph("<b>IRM Originale</b>", body_style)])
+    img_orig = _scaled_image(original_img_path, max_side, max_side)
 
     # Heatmap Grad-CAM si cochée et disponible
     show_heatmap = include_options.get("heatmap", False) and heatmap_img_path is not None
     if show_heatmap:
-        img_heat = RLImage(heatmap_img_path, width=img_width, height=img_height)
-        images_row_table = Table([[img_orig, img_heat], 
-                                  [Paragraph("<b>IRM Originale</b>", body_style), 
-                                   Paragraph("<b>Heatmap Grad-CAM (Zone d'Activation)</b>", body_style)]], 
+        img_heat = _scaled_image(heatmap_img_path, max_side, max_side)
+        cam_label = (f"Heatmap Grad-CAM pour la classe « {heatmap_class} »" if heatmap_class
+                     else "Heatmap Grad-CAM (classe prédite)")
+        images_row_table = Table([[img_orig, img_heat],
+                                  [Paragraph("<b>IRM Originale</b>", body_style),
+                                   Paragraph(f"<b>{cam_label}</b><br/>Rouge : zones les plus influentes "
+                                             "pour cette classe ; bleu : zones peu influentes.", body_style)]],
                                  colWidths=[260, 260])
     else:
         images_row_table = Table([[img_orig], [Paragraph("<b>IRM Originale</b>", body_style)]], colWidths=[520])
@@ -136,6 +148,38 @@ def generate_medical_pdf(
         story.append(Paragraph("3. Observations & Remarques Cliniques", header_style))
         story.append(Paragraph(notes.replace('\n', '<br/>'), body_style))
         story.append(Spacer(1, 12))
+
+    # Métriques et paramètres du modèle
+    if include_options.get("metrics") and model_info:
+        story.append(Paragraph("4. Modèle et performances (jeu de test)", header_style))
+        cfg, m = model_info["config"], model_info["metrics"]
+        params_data = [
+            ["Paramètre", "Valeur"],
+            ["Nombre de paramètres", f"{model_info['n_parameters']:,}".replace(",", " ")],
+            ["Filtres de base / Dense / Dropout",
+             f"{cfg['model']['filters']} / {cfg['model']['dense']} / {cfg['model']['dropout']}"],
+            ["Learning rate / Batch / Weight decay",
+             f"{cfg['training']['learning_rate']:.2e} / {cfg['training']['batch_size']} / {cfg['training']['weight_decay']}"],
+            ["Accuracy / Loss (test)", f"{m['accuracy'] * 100:.2f} % / {m['loss']:.3f}"],
+        ]
+        report_data = [["Classe", "Précision", "Rappel", "F1-score"]]
+        for name in m["class_names"]:
+            r = m["classification_report"][name]
+            report_data.append([name.capitalize(), f"{r['precision']:.3f}", f"{r['recall']:.3f}", f"{r['f1-score']:.3f}"])
+
+        table_style = TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('PADDING', (0,0), (-1,-1), 6),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1'))
+        ])
+        for data, widths in [(params_data, [260, 260]), (report_data, [130, 130, 130, 130])]:
+            table = Table(data, colWidths=widths)
+            table.setStyle(table_style)
+            story.append(table)
+            story.append(Spacer(1, 8))
 
     # avertissement 
     if include_options.get("disclaimer"):
