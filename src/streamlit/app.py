@@ -33,6 +33,8 @@ st.set_page_config(
 @st.cache_resource
 def charger_modele():
     """Renvoie (modèle, stats, checkpoint, modèle_factice)."""
+    # TODO Chloé : stats.json n'existe qu'après `python src/main.py prepare` (non versionné).
+    # Plus simple : utiliser checkpoint["stats"], enregistré avec le modèle.
     stats = json.loads(stats_path().read_text(encoding="utf-8"))
     if CHECKPOINT.exists():
         from cnn import build_model  # nom de la fonction à confirmer avec le binôme
@@ -42,6 +44,8 @@ def charger_modele():
         model.eval()
         return model, stats, checkpoint, False
     # pas encore de modèle entraîné : CNN factice pour développer l'interface
+    # TODO Chloé : dummy_model.py n'est pas dans le dépôt (inutile maintenant que
+    # models/best_model.pt est versionné, mais plante si le modèle est absent).
     from dummy_model import petit_cnn
     return petit_cnn().eval(), stats, None, True
 
@@ -129,6 +133,10 @@ with tab_explore:
 # ------------------------------------------------------------------------------
 with tab_model:
     st.header("Synthèse des Performances du CNN")
+    # TODO Chloé : afficher les résultats fournis par Assalas :
+    #   - reports/metrics.json   (accuracy, loss, rapport par classe, matrice de confusion)
+    #   - reports/history.json   (loss / accuracy par epoch)
+    #   - reports/figures/training_curves.png, confusion_matrix.png, optuna_history.png
     st.info("Espace réservé à l'affichage des métriques (Accuracy, Loss, Matrice de confusion) transmises par le Binôme A.")
 
 # ------------------------------------------------------------------------------

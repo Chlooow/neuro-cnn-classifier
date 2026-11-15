@@ -23,7 +23,7 @@ data/external/**
 # Generated model weights and reports
 models/**
 !models/.gitkeep
-# le modèle final est petit (1,7 Mo) : on le versionne pour l'application
+# le modèle final est petit (3,7 Mo) : on le versionne pour l'application
 !models/best_model.pt
 !models/model_config.json
 reports/**
@@ -32,3 +32,4 @@ reports/**
 !reports/figures/*.png
 !reports/metrics.json
 !reports/history.json
+!reports/optuna_trials.csv

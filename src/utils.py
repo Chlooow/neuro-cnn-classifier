@@ -1,6 +1,4 @@
-"""Fonctions utilitaires partagées (configuration, reproductibilité)."""
-
-from __future__ import annotations
+"""Petites fonctions communes : config, graine aléatoire, GPU."""
 
 import random
 from pathlib import Path
@@ -13,13 +11,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_config(name: str = "baseline") -> dict:
-    """Lit configs/<name>.yaml."""
     with open(PROJECT_ROOT / "configs" / f"{name}.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
 def set_seed(seed: int = 42) -> None:
-    """Fixe toutes les graines aléatoires pour des résultats reproductibles."""
+    # même graine partout = mêmes résultats à chaque lancement
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

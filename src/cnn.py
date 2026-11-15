@@ -1,13 +1,10 @@
-"""CNN : architecture, entraînement avec callbacks, évaluation, sauvegarde (étapes 2, 3, 4 et 6)."""
-
-from __future__ import annotations
+"""Étapes 2, 3, 4 et 6 : le CNN, son entraînement, son évaluation et sa sauvegarde."""
 
 import copy
 import json
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch import nn
 
@@ -15,83 +12,67 @@ from load_data import CLASS_NAMES, get_dataloaders
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODELS = PROJECT_ROOT / "models"
-REPORTS = PROJECT_ROOT / "reports"
 
 
-# --------------------------------------------------------------------------- #
-# Étape 2 : architecture
-# --------------------------------------------------------------------------- #
-def conv_block(c_in: int, c_out: int) -> nn.Sequential:
-    """Conv 3x3 -> BatchNorm -> ReLU -> MaxPool 2x2 (divise la taille par 2)."""
+# ---------- étape 2 : l'architecture ----------
+
+def conv_block(c_in, c_out):
     return nn.Sequential(
-        nn.Conv2d(c_in, c_out, kernel_size=3, padding=1),
-        nn.BatchNorm2d(c_out),
+        nn.Conv2d(c_in, c_out, kernel_size=3, padding=1),  # padding=1 : la taille ne change pas
+        nn.BatchNorm2d(c_out),  # stabilise l'entraînement
         nn.ReLU(),
-        nn.MaxPool2d(2),
+        nn.MaxPool2d(2),  # divise la hauteur et la largeur par 2
     )
 
 
 class BrainTumorCNN(nn.Module):
-    """4 blocs de convolution (32 -> 64 -> 128 -> 256 filtres par défaut), puis classifieur.
+    """4 blocs de convolution puis un classifieur. Entrée (B, 1, 224, 224), sortie (B, 4)."""
 
-    Entrée (B, 1, 224, 224) -> sortie (B, 4) : un score (logit) par classe.
-    """
-
-    def __init__(self, filters: int = 32, dense: int = 128, dropout: float = 0.3,
-                 n_classes: int = 4):
+    def __init__(self, filters=32, dense=128, dropout=0.3):
         super().__init__()
-        f = [filters, filters * 2, filters * 4, filters * 8]
+        f = [filters, filters * 2, filters * 4, filters * 8]  # on double à chaque bloc
         self.features = nn.Sequential(
             conv_block(1, f[0]),     # 224 -> 112
             conv_block(f[0], f[1]),  # 112 -> 56
             conv_block(f[1], f[2]),  # 56 -> 28
-            conv_block(f[2], f[3]),  # 28 -> 14  (dernière conv : utilisée par Grad-CAM)
+            conv_block(f[2], f[3]),  # 28 -> 14, la dernière conv sert au Grad-CAM
         )
-        self.pool = nn.AdaptiveAvgPool2d(1)  # Global Average Pooling : (f[3], 14, 14) -> (f[3])
+        self.pool = nn.AdaptiveAvgPool2d(1)  # moyenne de chaque carte 14x14 -> 1 nombre par filtre
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(f[3], dense),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(dense, n_classes),
+            nn.Dropout(dropout),  # éteint des neurones au hasard, contre le surapprentissage
+            nn.Linear(dense, len(CLASS_NAMES)),  # 1 score par classe (softmax fait dans la loss)
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         return self.classifier(self.pool(self.features(x)))
 
 
-def build_model(config: dict) -> BrainTumorCNN:
-    """Construit le modèle depuis la section 'model' de la config (utilisé aussi par l'appli)."""
-    m = config.get("model", config)
-    return BrainTumorCNN(filters=m.get("filters", 32), dense=m.get("dense", 128),
-                         dropout=m.get("dropout", 0.3), n_classes=len(CLASS_NAMES))
+def build_model(config):
+    m = config.get("model", {})
+    return BrainTumorCNN(m.get("filters", 32), m.get("dense", 128), m.get("dropout", 0.3))
 
 
-def count_parameters(model: nn.Module) -> int:
+def count_parameters(model):
     return sum(p.numel() for p in model.parameters())
 
 
-# --------------------------------------------------------------------------- #
-# Étape 3 : entraînement
-# --------------------------------------------------------------------------- #
-def class_weights(y: np.ndarray) -> torch.Tensor:
-    """Poids = inverse de la fréquence : une erreur sur une classe rare compte plus."""
-    counts = np.bincount(y, minlength=len(CLASS_NAMES))
-    return torch.tensor(len(y) / (len(CLASS_NAMES) * counts), dtype=torch.float32)
-
+# ---------- étape 3 : l'entraînement ----------
 
 def run_epoch(model, loader, criterion, device, optimizer=None):
-    """Une passe sur le loader. Avec optimizer : entraînement, sinon : évaluation."""
+    """Une passe sur toutes les images. Avec optimizer on entraîne, sans on évalue."""
     train = optimizer is not None
-    model.train(train)
+    model.train(train)  # active ou coupe le dropout
     total_loss, correct, n = 0.0, 0, 0
     with torch.set_grad_enabled(train):
         for x, y in loader:
-            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            x, y = x.to(device), y.to(device)
             logits = model(x)
             loss = criterion(logits, y)
             if train:
-                optimizer.zero_grad()
+                optimizer.zero_grad()  # sinon les gradients s'additionnent d'un batch à l'autre
                 loss.backward()
                 optimizer.step()
             total_loss += loss.item() * len(y)
@@ -100,35 +81,19 @@ def run_epoch(model, loader, criterion, device, optimizer=None):
     return total_loss / n, correct / n
 
 
-def loader_options(config: dict) -> dict:
-    """Options de prétraitement de la config (section 'preprocessing')."""
-    pre = config.get("preprocessing", {})
-    return {"per_image": pre.get("per_image_norm", False),
-            "strong_aug": pre.get("strong_augment", False)}
-
-
-def train_model(config: dict, data, device, verbose: bool = True, trial=None):
-    """Entraîne le modèle avec 3 callbacks :
-
-    - ModelCheckpoint : on garde les poids de la meilleure epoch (val_loss la plus basse)
-    - ReduceLROnPlateau : learning rate divisé par 2 si la val_loss stagne 3 epochs
-    - EarlyStopping : arrêt si la val_loss ne s'améliore plus pendant `patience` epochs
-
-    Renvoie (modèle avec les meilleurs poids, historique).
-    """
+def train_model(config, data, device, verbose=True, trial=None):
+    """Entraîne le modèle, renvoie (modèle avec ses meilleurs poids, historique)."""
     t = config["training"]
     torch.manual_seed(config["project"]["seed"])
     train_loader, val_loader, _ = get_dataloaders(
-        data, batch_size=t["batch_size"], augment=t["augment"], num_workers=t["num_workers"],
-        seed=config["project"]["seed"], **loader_options(config))
+        data, t["batch_size"], t["augment"], t["num_workers"], config["project"]["seed"])
 
     model = build_model(config).to(device)
-    weights = class_weights(data.y_train).to(device) if t.get("class_weights", True) else None
-    criterion = nn.CrossEntropyLoss(weight=weights)
+    criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=t["learning_rate"],
-                                 weight_decay=t.get("weight_decay", 0.0))
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5,
-                                                           patience=3)
+                                 weight_decay=t["weight_decay"])
+    # callback 1 : learning rate divisé par 2 si la val_loss stagne 3 epochs
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=3)
 
     history = {"loss": [], "accuracy": [], "val_loss": [], "val_accuracy": [], "lr": []}
     best_loss, best_state, best_epoch, wait = float("inf"), None, 0, 0
@@ -142,7 +107,7 @@ def train_model(config: dict, data, device, verbose: bool = True, trial=None):
             history[k].append(v)
 
         improved = val_loss < best_loss
-        if improved:  # ModelCheckpoint
+        if improved:  # callback 2 : on garde les poids de la meilleure epoch
             best_loss, best_epoch, wait = val_loss, epoch, 0
             best_state = copy.deepcopy(model.state_dict())
         else:
@@ -151,12 +116,12 @@ def train_model(config: dict, data, device, verbose: bool = True, trial=None):
             print(f"epoch {epoch:2d} | loss {loss:.4f} acc {acc:.3f} | val_loss {val_loss:.4f} "
                   f"val_acc {val_acc:.3f} | lr {lr:.1e} | {time.time() - start:.0f}s"
                   + ("  *" if improved else ""))
-        if trial is not None:  # Optuna : arrêt des essais peu prometteurs
+        if trial is not None:  # Optuna : on arrête les essais qui partent mal
             trial.report(val_loss, epoch)
             if trial.should_prune():
                 import optuna
                 raise optuna.TrialPruned()
-        if wait >= t.get("patience", 7):  # EarlyStopping
+        if wait >= t["patience"]:  # callback 3 : early stopping
             if verbose:
                 print(f"early stopping : pas d'amélioration depuis {wait} epochs")
             break
@@ -166,12 +131,11 @@ def train_model(config: dict, data, device, verbose: bool = True, trial=None):
     return model, history
 
 
-# --------------------------------------------------------------------------- #
-# Étape 4 : évaluation
-# --------------------------------------------------------------------------- #
+# ---------- étape 4 : l'évaluation ----------
+
 @torch.no_grad()
 def predict(model, loader, device):
-    """Renvoie (labels vrais, probabilités (N, 4))."""
+    """Renvoie (vrais labels, probabilités de chaque classe)."""
     model.eval()
     ys, probs = [], []
     for x, y in loader:
@@ -180,12 +144,11 @@ def predict(model, loader, device):
     return torch.cat(ys).numpy(), torch.cat(probs).numpy()
 
 
-def evaluate(model, loader, device) -> dict:
-    """Accuracy, loss, rapport de classification par classe et matrice de confusion."""
+def evaluate(model, loader, device):
     from sklearn.metrics import classification_report, confusion_matrix, log_loss
 
     y, p = predict(model, loader, device)
-    pred = p.argmax(1)
+    pred = p.argmax(1)  # classe prédite = la plus probable
     return {
         "accuracy": float((pred == y).mean()),
         "loss": float(log_loss(y, p, labels=range(len(CLASS_NAMES)))),
@@ -196,27 +159,21 @@ def evaluate(model, loader, device) -> dict:
     }
 
 
-# --------------------------------------------------------------------------- #
-# Étape 6 : sauvegarde / chargement
-# --------------------------------------------------------------------------- #
-def save_model(model, config: dict, stats: dict, path: Path = MODELS / "best_model.pt",
-               metrics: dict | None = None) -> Path:
-    """Sauvegarde les poids + tout ce qu'il faut pour reconstruire et utiliser le modèle."""
+# ---------- étape 6 : sauvegarde et rechargement ----------
+
+def save_model(model, config, stats, metrics=None, path=MODELS / "best_model.pt"):
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
-        "state_dict": model.state_dict(),
-        "config": config,
+        "state_dict": model.state_dict(),  # les poids
+        "config": config,  # de quoi reconstruire la même architecture
         "class_names": CLASS_NAMES,
-        "stats": {**{k: stats[k] for k in ["image_size", "mean", "std", "channels"]},
-                  "per_image_norm": loader_options(config)["per_image"]},
+        "stats": {"image_size": stats["image_size"], "channels": stats["channels"]},
         "metrics": metrics,
     }, path)
     (path.parent / "model_config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
-    return path
 
 
-def load_model(path: Path = MODELS / "best_model.pt", device="cpu"):
-    """Recharge le modèle sauvegardé. Renvoie (modèle en mode eval, checkpoint)."""
+def load_model(path=MODELS / "best_model.pt", device="cpu"):
     ckpt = torch.load(path, map_location=device, weights_only=False)
     model = build_model(ckpt["config"])
     model.load_state_dict(ckpt["state_dict"])

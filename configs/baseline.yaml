@@ -16,11 +16,10 @@ model:
 
 training:
   batch_size: 32
-  epochs: 40             # maximum : l'early stopping arrête avant
+  epochs: 60             # maximum : l'early stopping arrête avant
   learning_rate: 0.001
   weight_decay: 0.0001   # légère régularisation L2 des poids
-  patience: 7            # early stopping : epochs sans amélioration de la val_loss
-  class_weights: true    # notumor a moins d'images après nettoyage
+  patience: 10           # early stopping : epochs sans amélioration de la val_loss
   augment: true
   num_workers: 0
 
