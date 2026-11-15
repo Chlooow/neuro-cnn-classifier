@@ -21,7 +21,7 @@ Classification d'IRM cérébrales en 4 classes (`glioma`, `meningioma`, `notumor
 - Validation = 15 % de Training (stratifiée). Le jeu **Testing** officiel n'est utilisé qu'à l'évaluation finale.
 
 ### Architecture
-4 blocs `Conv 3×3 (padding 1) → BatchNorm → ReLU → MaxPool 2×2`, avec un nombre de filtres doublé à chaque bloc (f, 2f, 4f, 8f), puis `AdaptiveAvgPool2d(1)` et un classifieur `Linear → ReLU → Dropout → Linear(4)`. Meilleure configuration trouvée par Optuna : 48 filtres de base, Dense 128, dropout 0,1, learning rate ≈ 4,7e-4, batch 16 (923 300 paramètres).
+4 blocs `Conv 3×3 (padding 1) → BatchNorm → ReLU → MaxPool 2×2`, avec un nombre de filtres doublé à chaque bloc (f, 2f, 4f, 8f), puis `AdaptiveAvgPool2d(1)` et un classifieur `Linear → ReLU → Dropout → Linear(4)`. Meilleure configuration trouvée par Optuna : 48 filtres de base, Dense 128, dropout 0,1, learning rate d'environ 4,7e-4, batch 16 (923 300 paramètres).
 
 ### Entraînement
 Adam avec weight decay ; callbacks : `ReduceLROnPlateau` (lr ÷ 2 après 3 epochs sans amélioration), early stopping (patience 10) et conservation des poids de la meilleure epoch (selon la `val_loss`).
@@ -54,7 +54,7 @@ Le dataset est chargé via `kagglehub` dans un `try/except`. Sans connexion et s
 - la galerie et le sélecteur d'images de test sont désactivés ;
 - l'onglet « Modèle & Performances » et l'import d'un fichier continuent de fonctionner.
 
-**Avant la soutenance :** lancer l'application une fois avec internet pour remplir le cache `kagglehub` (le dataset restera ensuite disponible hors ligne).
+**Avant la soutenance !!! :** il faut lancer l'application une fois avec internet pour remplir le cache `kagglehub` (le dataset restera ensuite disponible hors ligne).
 
 ## 3. Rapport PDF
 Contenu : image testée, heatmap Grad-CAM (avec la classe expliquée et sa légende), probabilités, métriques et paramètres du modèle, remarques du praticien et avertissement. Les images conservent leur **ratio d'origine** (boîte maximale 240×240, sans déformation).
@@ -65,16 +65,14 @@ Contenu : image testée, heatmap Grad-CAM (avec la classe expliquée et sa lége
 3. Poids de chaque carte = moyenne spatiale de son gradient ; somme pondérée, ReLU, redimensionnement à 224×224, normalisation 0–1.
 4. Superposition (colormap `jet`, alpha 0,4) sur l'IRM en niveaux de gris.
 
-La carte n'explique qu'**une** classe à la fois ; `explain_image(..., class_idx=...)` permet de choisir laquelle.
+La carte n'explique qu'une classe à la fois ; `explain_image(..., class_idx=...)` permet de choisir laquelle.
 
 ## 5. Points à préciser à l'oral
-- Les courbes montrent train et **validation** (le sujet dit « test ») : la validation sert aux callbacks, le test est gardé pour l'évaluation finale et apparaît en trait constant.
-- Écart validation (≈ 96 %) / test (≈ 89,8 %) : le test officiel est plus difficile et ses quasi-copies ont été retirées de Training, ce qui évite une évaluation optimiste.
 - Grad-CAM est une aide d'interprétation, pas une preuve médicale ; l'application n'est pas un dispositif médical.
 
 ## 6. Dépannage
 | Problème | Cause probable | Solution |
 |---|---|---|
-| « Le dataset n'est pas disponible » | Pas d'internet et cache `kagglehub` vide | Lancer l'app une fois en ligne ; ou utiliser l'import de fichier |
+| « Le dataset n'est pas disponible » | Pas d'internet et cache `kagglehub` vide | Il faut lancer l'app une fois en ligne ; ou utiliser l'import de fichier |
 | « Modèle introuvable » | `models/best_model.pt` absent | `uv run python src/main.py train --config best` |
 | Cache de données obsolète | Changement de taille d'image ou de seed | `uv run python src/main.py prepare --force` |

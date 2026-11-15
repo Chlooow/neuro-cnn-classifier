@@ -11,7 +11,7 @@ import seaborn as sns
 import streamlit as st
 from PIL import Image
 
-# on remonte jusqu'à la racine du projet (pyproject.toml) pour rendre src/ importable
+# on remonte jusqu'à la racine du projet 
 ROOT = Path(__file__).resolve().parent
 while not (ROOT / "pyproject.toml").exists():
     ROOT = ROOT.parent
@@ -28,7 +28,7 @@ EXTENSIONS = {".jpg", ".jpeg", ".png"}
 CHECKPOINT = ROOT / "models" / "best_model.pt"
 REPORTS = ROOT / "reports"
 
-# Configuration générale de la page
+# Config de la page
 st.set_page_config(
     page_title="CerebroAI - Diagnostic IRM",
     page_icon="🧠",
@@ -58,7 +58,7 @@ def dossier_dataset():
         return None, st.session_state["dataset_erreur"]
     try:
         return _telecharger_dataset(), None
-    except Exception as exc:  # pas de réseau, pas de cache, identifiants Kaggle manquants...
+    except Exception as exc:  # pas de réseau, pas de cache, identifiants Kaggle manquants au cas ou pour la presentation
         st.session_state["dataset_erreur"] = f"{type(exc).__name__} : {exc}"
         return None, st.session_state["dataset_erreur"]
 
