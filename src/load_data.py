@@ -109,15 +109,26 @@ def prepare_image(image: Image.Image | str | Path, image_size: int) -> np.ndarra
     return np.array(square, dtype=np.uint8)
 
 
-def normalization(mean: float, std: float) -> v2.Transform:
-    """Étape 4 : uint8 [0, 255] -> float [0, 1] -> standardisé (moyenne 0, écart-type 1)."""
-    return v2.Compose([v2.ToDtype(torch.float32, scale=True), v2.Normalize([mean], [std])])
+def standardize_each(x: torch.Tensor) -> torch.Tensor:
+    """Standardise une image avec SA propre moyenne et SON propre écart-type."""
+    return (x - x.mean()) / (x.std() + 1e-6)
+
+
+def normalization(mean: float, std: float, per_image: bool = False) -> v2.Transform:
+    """Étape 4 : uint8 [0, 255] -> float [0, 1] -> standardisé (moyenne 0, écart-type 1).
+
+    per_image=True : chaque image est standardisée avec ses propres statistiques, ce qui
+    efface les différences de luminosité / contraste entre les sources d'images.
+    """
+    last = v2.Lambda(standardize_each) if per_image else v2.Normalize([mean], [std])
+    return v2.Compose([v2.ToDtype(torch.float32, scale=True), last])
 
 
 def preprocess_for_inference(image: Image.Image, stats: dict) -> torch.Tensor:
     """Image PIL -> tenseur (1, 1, H, W) prêt pour model(x). À utiliser dans l'appli Streamlit."""
     arr = torch.from_numpy(prepare_image(image, stats["image_size"]))[None]  # (1, H, W)
-    return normalization(stats["mean"], stats["std"])(arr)[None]
+    norm = normalization(stats["mean"], stats["std"], stats.get("per_image_norm", False))
+    return norm(arr)[None]
 
 
 # --------------------------------------------------------------------------- #
@@ -156,7 +167,7 @@ def prepare_dataset(
         d = np.load(cache, allow_pickle=False)
         stats = json.loads(stats_path().read_text(encoding="utf-8"))
         same = stats.get("image_size") == image_size and stats.get("seed") == seed
-        if same and "n_near_test_removed" in stats:  # sinon : ancien cache, on refait
+        if same and "val_paths" in stats:  # sinon : ancien cache, on refait
             return PreparedData(*(d[k] for k in ["x_train", "y_train", "x_val", "y_val",
                                                   "x_test", "y_test"]), stats=stats)
 
@@ -199,6 +210,7 @@ def prepare_dataset(
         "n_train": len(tr_p),
         "n_val": len(va_p),
         "n_test": len(test_paths),
+        "val_paths": [str(p.relative_to(root)) for p in va_p],
         "test_paths": [str(p.relative_to(root)) for p in test_paths],
     }
 
@@ -212,18 +224,26 @@ def prepare_dataset(
 # --------------------------------------------------------------------------- #
 # Dataset PyTorch + DataLoaders
 # --------------------------------------------------------------------------- #
-def train_augmentation() -> v2.Transform:
+def train_augmentation(strong: bool = False) -> v2.Transform:
     """Augmentations légères, réalistes pour des IRM, appliquées au train uniquement.
 
     - flip horizontal : le cerveau est à peu près symétrique gauche/droite et une tumeur
       peut être d'un côté comme de l'autre (pas de flip vertical : non réaliste)
     - petite rotation / translation / zoom : variations de positionnement du patient
     - léger changement de luminosité / contraste : variations entre machines IRM
+    strong=True : luminosité / contraste plus forts, flou et compression JPEG aléatoires,
+    pour que le modèle ne puisse pas reconnaître la source d'une image à ces détails.
     """
-    return v2.Compose([
+    steps = [
         v2.RandomHorizontalFlip(p=0.5),
         v2.RandomAffine(degrees=10, translate=(0.05, 0.05), scale=(0.95, 1.05)),
-        v2.ColorJitter(brightness=0.1, contrast=0.1),
+    ]
+    if not strong:
+        return v2.Compose(steps + [v2.ColorJitter(brightness=0.1, contrast=0.1)])
+    return v2.Compose(steps + [
+        v2.ColorJitter(brightness=0.3, contrast=0.3),
+        v2.RandomApply([v2.GaussianBlur(3, sigma=(0.1, 1.0))], p=0.2),
+        v2.RandomApply([v2.JPEG(quality=(40, 100))], p=0.5),
     ])
 
 
@@ -231,11 +251,11 @@ class MRIDataset(Dataset):
     """Renvoie (image (1, H, W) normalisée, label), avec augmentation optionnelle."""
 
     def __init__(self, x: np.ndarray, y: np.ndarray, mean: float, std: float,
-                 augment: bool = False):
+                 augment: bool = False, per_image: bool = False, strong_aug: bool = False):
         self.x = torch.from_numpy(x).unsqueeze(1)  # (N, H, W) -> (N, 1, H, W), uint8
         self.y = torch.from_numpy(y)
-        steps = [train_augmentation()] if augment else []
-        self.transform = v2.Compose(steps + [normalization(mean, std)])
+        steps = [train_augmentation(strong_aug)] if augment else []
+        self.transform = v2.Compose(steps + [normalization(mean, std, per_image)])
 
     def __len__(self) -> int:
         return len(self.y)
@@ -245,14 +265,17 @@ class MRIDataset(Dataset):
 
 
 def get_dataloaders(data: PreparedData, batch_size: int = 32, augment: bool = True,
-                    num_workers: int = 0, seed: int = 42):
+                    num_workers: int = 0, seed: int = 42, per_image: bool = False,
+                    strong_aug: bool = False):
     """Renvoie (train_loader, val_loader, test_loader)."""
     m, s = data.stats["mean"], data.stats["std"]
+    norm = dict(per_image=per_image)
     g = torch.Generator().manual_seed(seed)
     opts = dict(batch_size=batch_size, num_workers=num_workers,
                 pin_memory=torch.cuda.is_available())
-    train = DataLoader(MRIDataset(data.x_train, data.y_train, m, s, augment=augment),
+    train = DataLoader(MRIDataset(data.x_train, data.y_train, m, s, augment=augment,
+                                  strong_aug=strong_aug, **norm),
                        shuffle=True, generator=g, **opts)
-    val = DataLoader(MRIDataset(data.x_val, data.y_val, m, s), **opts)
-    test = DataLoader(MRIDataset(data.x_test, data.y_test, m, s), **opts)
+    val = DataLoader(MRIDataset(data.x_val, data.y_val, m, s, **norm), **opts)
+    test = DataLoader(MRIDataset(data.x_test, data.y_test, m, s, **norm), **opts)
     return train, val, test

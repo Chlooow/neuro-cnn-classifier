@@ -9,11 +9,18 @@ project:
     - notumor
     - pituitary
 
+model:
+  filters: 32            # filtres du 1er bloc, doublés à chaque bloc : 32, 64, 128, 256
+  dense: 128             # neurones de la couche Dense
+  dropout: 0.3
+
 training:
   batch_size: 32
-  epochs: 30
+  epochs: 40             # maximum : l'early stopping arrête avant
   learning_rate: 0.001
-  dropout: 0.3
+  weight_decay: 0.0001   # légère régularisation L2 des poids
+  patience: 7            # early stopping : epochs sans amélioration de la val_loss
+  class_weights: true    # notumor a moins d'images après nettoyage
   augment: true
   num_workers: 0
 
