@@ -1,4 +1,12 @@
-# Classification de tumeurs cérébrales par IRM
+# CerebroAI: Classification de tumeurs cérébrales par IRM
+
+<img width="2000" height="2000" alt="logo-cerebroai" src="https://github.com/user-attachments/assets/111ff1f4-c2d7-43dc-b577-646c1c257a1d" />
+
+https://www.kaggle.com/datasets/masoudnickparvar/brain-tumor-mri-dataset
+
+lien des slides : https://canva.link/qz8yfu72lgudejd
+
+---
 
 Projet de classification multi-classes d'images IRM en quatre catégories : `glioma`, `meningioma`, `pituitary` et `notumor`.
 
@@ -57,3 +65,6 @@ Télécharger le dataset « Brain Tumor MRI Dataset » depuis [Kaggle](https://w
 ## Sujet et critères
 
 Le projet suit les étapes du sujet : préparation du dataset, CNN d'au moins quatre convolutions, entraînement avec callbacks, évaluation (accuracy, loss, rapport de classification et matrice de confusion), optimisation des hyperparamètres, sauvegarde/rechargement, interface Streamlit et rapport PDF. Grad-CAM est prévu comme bonus.
+
+
+
