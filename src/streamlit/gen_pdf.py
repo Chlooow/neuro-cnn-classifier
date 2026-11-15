@@ -6,6 +6,14 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RL
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
+def _scaled_image(path, max_width, max_height):
+    """Image ReportLab qui tient dans (max_width, max_height) en gardant son ratio."""
+    with Image.open(path) as im:
+        w, h = im.size
+    scale = min(max_width / w, max_height / h)
+    return RLImage(path, width=w * scale, height=h * scale)
+
+
 def generate_medical_pdf(
     patient_id: str,
     pred_class: str,
@@ -14,7 +22,8 @@ def generate_medical_pdf(
     heatmap_img_path: str = None,
     notes: str = "",
     include_options: dict = None,
-    model_info: dict = None
+    model_info: dict = None,
+    heatmap_class: str = None
 ) -> bytes:
     """Génère un rapport PDF médical personnalisé en mémoire sous forme de bytes."""
     if include_options is None:
@@ -87,20 +96,22 @@ def generate_medical_pdf(
     # Section Imagerie 
     story.append(Paragraph("1. Imagerie Clinique & Diagnostic Visuel", header_style))
     
-    img_width, img_height = 200, 200
-    images_row = []
-    
+    # les images tiennent dans une boîte de 240x240 : on garde leur ratio (pas de déformation)
+    max_side = 240
+
     # Image originale
-    img_orig = RLImage(original_img_path, width=img_width, height=img_height)
-    images_row.append([img_orig, Paragraph("<b>IRM Originale</b>", body_style)])
+    img_orig = _scaled_image(original_img_path, max_side, max_side)
 
     # Heatmap Grad-CAM si cochée et disponible
     show_heatmap = include_options.get("heatmap", False) and heatmap_img_path is not None
     if show_heatmap:
-        img_heat = RLImage(heatmap_img_path, width=img_width, height=img_height)
-        images_row_table = Table([[img_orig, img_heat], 
-                                  [Paragraph("<b>IRM Originale</b>", body_style), 
-                                   Paragraph("<b>Heatmap Grad-CAM (Zone d'Activation)</b>", body_style)]], 
+        img_heat = _scaled_image(heatmap_img_path, max_side, max_side)
+        cam_label = (f"Heatmap Grad-CAM pour la classe « {heatmap_class} »" if heatmap_class
+                     else "Heatmap Grad-CAM (classe prédite)")
+        images_row_table = Table([[img_orig, img_heat],
+                                  [Paragraph("<b>IRM Originale</b>", body_style),
+                                   Paragraph(f"<b>{cam_label}</b><br/>Rouge : zones les plus influentes "
+                                             "pour cette classe ; bleu : zones peu influentes.", body_style)]],
                                  colWidths=[260, 260])
     else:
         images_row_table = Table([[img_orig], [Paragraph("<b>IRM Originale</b>", body_style)]], colWidths=[520])

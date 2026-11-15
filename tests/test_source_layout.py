@@ -10,13 +10,13 @@ def test_source_files_are_under_src():
         "cnn.py",
         "optimize.py",
         "grad_cam.py",
-        "report_pdf.py",
         "utils.py",
         "main.py",
     ]:
         assert (SOURCE_ROOT / name).is_file(), name
 
     assert (SOURCE_ROOT / "streamlit" / "app.py").is_file()
+    assert (SOURCE_ROOT / "streamlit" / "gen_pdf.py").is_file()
 
 
 def test_no_python_package_outside_src():

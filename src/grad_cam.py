@@ -62,19 +62,19 @@ def overlay_heatmap(gray, cam, alpha=0.4):
     mix = (1 - alpha) * base + alpha * colors
     return Image.fromarray((mix * 255).astype(np.uint8))
 
-def explain_image(model, image, stats, target_layer=None):
-    """Prédiction + Grad-CAM pour une image PIL, avec le même prétraitement qu'à l'entraînement."""
+def explain_image(model, image, stats, target_layer=None, class_idx=None):
     x = preprocess_for_inference(image, stats)
     gray = prepare_image(image, stats["image_size"])
 
     gradcam = GradCAM(model, target_layer)
     try:
-        cam, class_idx, probs = gradcam.compute(x)
+        cam, explained_idx, probs = gradcam.compute(x, class_idx)
     finally:
         gradcam.remove()
 
     return {
-        "pred_class": CLASS_NAMES[class_idx],
+        "pred_class": CLASS_NAMES[int(probs.argmax())],
+        "explained_class": CLASS_NAMES[explained_idx],
         "probabilities": {name: float(p) for name, p in zip(CLASS_NAMES, probs)},
         "heatmap": cam,
         "overlay": overlay_heatmap(gray, cam),

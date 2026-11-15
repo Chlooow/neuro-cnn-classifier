@@ -20,35 +20,59 @@ uv run pytest
 uv run streamlit run src/streamlit/app.py
 ```
 
-Le guide [docs/uv-guide.md](docs/uv-guide.md) explique les commandes et le fonctionnement de `uv` pour le binôme.
+Le guide [docs/uv-guide.md](docs/uv-guide.md) explique les commandes et le fonctionnement de `uv` pour le binôme. La documentation technique complète est dans [docs/documentation.md](docs/documentation.md).
+
+## Fonctionnalités de l'application
+
+- **Galerie d'Exploration** : choix du jeu (Test ou Entraînement) et de la classe, pagination, vue agrandie d'une image.
+- **Modèle & Performances** : paramètres et hyperparamètres, couches réelles du modèle (volet repliable), métriques (rapport de classification, matrice de confusion), courbes train / validation avec la valeur finale du test, résultats Optuna.
+- **Diagnostic Temps Réel** : image du jeu de test (classe réelle affichée) ou fichier importé, probabilités des 4 classes, Grad-CAM avec légende et choix de la classe expliquée.
+- **Rapport PDF** : image testée, heatmap Grad-CAM, probabilités, métriques et paramètres du modèle (images à leur ratio d'origine).
 
 ## Données
 
-Télécharger le dataset « Brain Tumor MRI Dataset » depuis [Kaggle](https://www.kaggle.com/datasets/masoudnickparvar/brain-tumor-mri-dataset), puis placer les répertoires `Training/` et `Testing/` dans `data/raw/`. Ne pas ajouter les images au dépôt Git. La préparation (redimensionnement, normalisation et séparation) sera documentée dans le code et les notebooks.
+Le dataset « Brain Tumor MRI Dataset » ([Kaggle](https://www.kaggle.com/datasets/masoudnickparvar/brain-tumor-mri-dataset)) est téléchargé automatiquement par `kagglehub` au premier lancement, puis réutilisé depuis le cache. Ne pas ajouter les images au dépôt Git.
+
+**Avant la soutenance :** lancer l'application une fois avec internet pour remplir le cache. Sans internet et sans cache, l'application ne plante pas : la galerie et le sélecteur d'images de test sont désactivés avec un message explicatif, mais l'onglet « Modèle & Performances » et l'import d'un fichier restent utilisables.
+
+## Commandes du pipeline
+
+```powershell
+uv run python src/main.py prepare                 # télécharge et prétraite le dataset
+uv run python src/main.py optimize --trials 15    # recherche d'hyperparamètres (Optuna)
+uv run python src/main.py train --config best     # entraîne avec configs/best.yaml
+uv run python src/main.py evaluate                # évalue models/best_model.pt sur le test
+```
+
+## Résultats (modèle optimisé)
+
+| Jeu | Accuracy | Loss |
+|---|---|---|
+| Validation | 95,97 % | 0,116 |
+| Test | 89,75 % | 0,517 |
+
+Configuration retenue : 48 filtres de base, Dense 128, dropout 0,1, learning rate ≈ 4,7e-4, batch 16 (923 300 paramètres).
 
 ## Structure
 
 ```text
 .
 |-- configs/                 # configurations d'expériences
-|-- data/
-|   |-- raw/                  # données Kaggle originales (non versionnées)
-|   |-- interim/              # données intermédiaires
-|   |-- processed/            # données prêtes pour le modèle
-|   `-- external/             # éventuelles données externes
-|-- docs/                     # documentation, dont le guide uv
-|-- models/                   # checkpoints (non versionnés)
-|-- notebooks/                # exploration et analyses exploratoires
-|-- reports/figures/          # courbes, matrices de confusion, Grad-CAM
+|-- data/                     # données (non versionnées)
+|-- docs/                     # documentation (documentation.md, guide uv)
+|-- models/                   # checkpoints
+|-- notebooks/                # EDA, prétraitement, modèle
+|-- reports/                  # métriques, historique, figures (courbes, matrice, Grad-CAM)
 |-- src/
 |   |-- load_data.py          # téléchargement et prétraitement des images
 |   |-- cnn.py                # architecture CNN, entraînement, évaluation
 |   |-- optimize.py           # optimisation des hyperparamètres (Optuna)
 |   |-- grad_cam.py           # Grad-CAM (bonus)
-|   |-- report_pdf.py         # génération du rapport PDF
 |   |-- utils.py              # fonctions utilitaires
 |   |-- main.py               # point d'entrée en ligne de commande
-|   `-- streamlit/app.py      # interface Streamlit
+|   `-- streamlit/
+|       |-- app.py            # interface Streamlit
+|       `-- gen_pdf.py        # génération du rapport PDF
 |-- tests/
 |-- pyproject.toml            # projet, dépendances et outils
 `-- uv.lock                  # versions exactes résolues par uv
@@ -64,7 +88,7 @@ Télécharger le dataset « Brain Tumor MRI Dataset » depuis [Kaggle](https://w
 
 ## Sujet et critères
 
-Le projet suit les étapes du sujet : préparation du dataset, CNN d'au moins quatre convolutions, entraînement avec callbacks, évaluation (accuracy, loss, rapport de classification et matrice de confusion), optimisation des hyperparamètres, sauvegarde/rechargement, interface Streamlit et rapport PDF. Grad-CAM est prévu comme bonus.
+Le projet suit les étapes du sujet : préparation du dataset, CNN d'au moins quatre convolutions, entraînement avec callbacks, évaluation (accuracy, loss, rapport de classification et matrice de confusion), optimisation des hyperparamètres, sauvegarde/rechargement, interface Streamlit et rapport PDF. Le bonus Grad-CAM est intégré à l'interface et au rapport PDF.
 
 
 
