@@ -60,7 +60,7 @@ Le dataset est chargé via `kagglehub` dans un `try/except`. Sans connexion et s
 Contenu : image testée, heatmap Grad-CAM (avec la classe expliquée et sa légende), probabilités, métriques et paramètres du modèle, remarques du praticien et avertissement. Les images conservent leur **ratio d'origine** (boîte maximale 240×240, sans déformation).
 
 ## 4. Grad-CAM
-1. Hook sur la dernière couche `Conv2d` (sortie 14×14).
+1. Hook sur la dernière couche `Conv2d` (cartes 28×28, avant BatchNorm, ReLU et MaxPool).
 2. Gradient du score de la classe expliquée par rapport aux cartes d'activation.
 3. Poids de chaque carte = moyenne spatiale de son gradient ; somme pondérée, ReLU, redimensionnement à 224×224, normalisation 0–1.
 4. Superposition (colormap `jet`, alpha 0,4) sur l'IRM en niveaux de gris.
