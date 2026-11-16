@@ -7,6 +7,7 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
     "ipykernel>=7.4.0",
     "kagglehub>=1.0.3",
+    "make>=0.1.6.post2",
     "matplotlib>=3.9",
     "numpy>=2.0",
     "optuna>=4.0",
