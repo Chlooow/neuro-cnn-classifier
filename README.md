@@ -27,7 +27,8 @@ Le guide [docs/uv-guide.md](docs/uv-guide.md) explique les commandes et le fonct
 - **Galerie d'Exploration** : choix du jeu (Test ou Entraînement) et de la classe, pagination, vue agrandie d'une image.
 - **Modèle & Performances** : paramètres et hyperparamètres, couches réelles du modèle (volet repliable), métriques (rapport de classification, matrice de confusion), courbes train / validation avec la valeur finale du test, résultats Optuna.
 - **Diagnostic Temps Réel** : image du jeu de test (classe réelle affichée) ou fichier importé, probabilités des 4 classes, Grad-CAM avec légende et choix de la classe expliquée.
-- **Rapport PDF** : image testée, heatmap Grad-CAM, probabilités, métriques et paramètres du modèle (images à leur ratio d'origine).
+- **Rapport PDF** : image testée, heatmap Grad-CAM, probabilités, métriques et paramètres du modèle (images à leur ratio d'origine), avec en option le nom du médecin, son établissement et une zone de signature.
+- **Services de neurologie** : volet indicatif de services hospitalo-universitaires d'Île-de-France (liste modifiable dans `src/streamlit/assets/neurologie_idf.json`, avec sources). Ce n'est pas une recommandation.
 
 ## Données
 
@@ -71,8 +72,13 @@ Configuration retenue : 48 filtres de base, Dense 128, dropout 0,1, learning rat
 |   |-- utils.py              # fonctions utilitaires
 |   |-- main.py               # point d'entrée en ligne de commande
 |   `-- streamlit/
-|       |-- app.py            # interface Streamlit
-|       `-- gen_pdf.py        # génération du rapport PDF
+|       |-- app.py                  # interface Streamlit : en-tête, onglets, pied de page
+|       |-- common.py               # chemins, accès au dataset, liste de neurologie
+|       |-- onglet_exploration.py   # onglet 1 : galerie d'images
+|       |-- onglet_modele.py        # onglet 2 : modèle et performances
+|       |-- onglet_diagnostic.py    # onglet 3 : prédiction, Grad-CAM, PDF
+|       |-- gen_pdf.py              # génération du rapport PDF
+|       `-- assets/                 # logo, image de test, neurologie_idf.json
 |-- tests/
 |-- pyproject.toml            # projet, dépendances et outils
 `-- uv.lock                  # versions exactes résolues par uv

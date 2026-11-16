@@ -10,7 +10,7 @@ Classification d'IRM cérébrales en 4 classes (`glioma`, `meningioma`, `notumor
 | Modèle | `src/cnn.py` | CNN, entraînement avec callbacks, évaluation, sauvegarde/rechargement |
 | Optimisation | `src/optimize.py` | Recherche Optuna (learning rate, batch, filtres, dropout) |
 | Interprétabilité | `src/grad_cam.py` | Grad-CAM sur la dernière convolution |
-| Application | `src/streamlit/app.py` | Interface en 3 onglets |
+| Application | `src/streamlit/app.py` et `onglet_*.py` | Interface en 3 onglets, un fichier par onglet |
 | Rapport PDF | `src/streamlit/gen_pdf.py` | Rapport ReportLab généré en mémoire |
 | CLI | `src/main.py` | `prepare`, `train`, `evaluate`, `optimize` |
 
@@ -30,6 +30,19 @@ Adam avec weight decay ; callbacks : `ReduceLROnPlateau` (lr ÷ 2 après 3 epoch
 
 Lancer : `uv run streamlit run src/streamlit/app.py`.
 
+### Organisation des fichiers
+| Fichier | Rôle |
+|---|---|
+| `app.py` | En-tête, chargement du modèle, création des trois onglets, pied de page |
+| `common.py` | Chemins, constantes, accès au dataset protégé par `try/except`, lecture de la liste de neurologie |
+| `onglet_exploration.py` | Onglet 1 : galerie |
+| `onglet_modele.py` | Onglet 2 : modèle et performances |
+| `onglet_diagnostic.py` | Onglet 3 : prédiction, Grad-CAM, formulaire PDF |
+| `gen_pdf.py` | Génération du rapport PDF |
+| `assets/neurologie_idf.json` | Liste indicative de services de neurologie d'Île-de-France |
+
+Chaque onglet expose une fonction `render(...)` appelée par `app.py`. Ne pas créer de `__init__.py` dans `src/streamlit/`.
+
 ### Onglet « Galerie d'Exploration »
 - Choix du jeu (**Test** ou **Entraînement**) et de la classe.
 - Pagination : 12 images par page, sélecteur de page ; changer de classe revient à la page 1.
@@ -46,7 +59,8 @@ Lancer : `uv run streamlit run src/streamlit/app.py`.
 - Source de l'image : **image du jeu de test** (on choisit la classe réelle puis le fichier ; la classe réelle est comparée à la prédiction) ou **import d'un fichier**.
 - Probabilités des 4 classes et classe prédite.
 - **Grad-CAM** : sélecteur de classe expliquée (par défaut la classe prédite) et légende « rouge = zones les plus influentes pour la classe expliquée ; bleu = peu influentes ».
-- Génération du rapport PDF (voir ci-dessous).
+- Volet « Services de neurologie de référence en Île-de-France » : liste indicative avec sources, modifiable dans `assets/neurologie_idf.json` (pas une recommandation, ces services n'ont pas participé au projet).
+- Génération du rapport PDF (voir ci-dessous) avec, en option, le nom du médecin, son établissement et une zone de signature.
 
 ### Robustesse sans internet
 Le dataset est chargé via `kagglehub` dans un `try/except`. Sans connexion et sans cache :
@@ -57,7 +71,7 @@ Le dataset est chargé via `kagglehub` dans un `try/except`. Sans connexion et s
 **Avant la soutenance !!! :** il faut lancer l'application une fois avec internet pour remplir le cache `kagglehub` (le dataset restera ensuite disponible hors ligne).
 
 ## 3. Rapport PDF
-Contenu : image testée, heatmap Grad-CAM (avec la classe expliquée et sa légende), probabilités, métriques et paramètres du modèle, remarques du praticien et avertissement. Les images conservent leur **ratio d'origine** (boîte maximale 240×240, sans déformation).
+Contenu : image testée, heatmap Grad-CAM (avec la classe expliquée et sa légende), probabilités, métriques et paramètres du modèle, remarques du praticien, nom du médecin et établissement (facultatifs, avec zone de signature) et avertissement. Les images conservent leur **ratio d'origine** (boîte maximale 240×240, sans déformation).
 
 ## 4. Grad-CAM
 1. Hook sur la dernière couche `Conv2d` (cartes 28×28, avant BatchNorm, ReLU et MaxPool).
