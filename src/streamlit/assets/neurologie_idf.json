@@ -1,0 +1,40 @@
+{
+  "note": "Liste indicative de services hospitalo-universitaires de neurologie en Île-de-France, établie le 16/11/2026 à partir des sites officiels cités. Elle n'est ni exhaustive ni une recommandation, et ces services n'ont pas participé au projet. Vérifier les informations avant usage.",
+  "etablissements": [
+    {
+      "etablissement": "Hôpital Pitié-Salpêtrière (AP-HP), Institut de neurologie",
+      "ville": "Paris 13e",
+      "adresse": "47-83 boulevard de l'Hôpital",
+      "responsable": "",
+      "source": "https://www.aphp.fr/saint-antoine/service-de-neurologie"
+    },
+    {
+      "etablissement": "Hôpital Lariboisière (AP-HP), service de neurologie",
+      "ville": "Paris 10e",
+      "adresse": "2 rue Ambroise Paré",
+      "responsable": "Pr Mikaël Mazighi (chef de service)",
+      "source": "https://www.aphp.fr/lariboisiere/service-de-neurologie"
+    },
+    {
+      "etablissement": "Neuro Sainte-Anne (GHU Paris psychiatrie et neurosciences)",
+      "ville": "Paris",
+      "adresse": "",
+      "responsable": "Pr David Calvet (neurologie)",
+      "source": "https://www.ghu-paris.fr/sites/default/files/media/downloads/organigramme_du_pole_neuro_sainte.pdf"
+    },
+    {
+      "etablissement": "Hôpital Fondation Adolphe de Rothschild, service de neurologie",
+      "ville": "Paris 19e",
+      "adresse": "25 rue Manin",
+      "responsable": "",
+      "source": "https://www.hopital.fr/ezpublish/index.php/annuaire-service/service-de-neurologie-hopital-fondation-rothschild-paris,45750"
+    },
+    {
+      "etablissement": "Hôpital Henri-Mondor (AP-HP), service de neurologie",
+      "ville": "Créteil (94)",
+      "adresse": "51 avenue du Maréchal de Lattre de Tassigny",
+      "responsable": "Pr Philippe Rémy (chef de service)",
+      "source": "https://www.aphp.fr/service/service-08-026"
+    }
+  ]
+}

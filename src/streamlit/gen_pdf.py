@@ -1,5 +1,6 @@
 import io
 import datetime
+from xml.sax.saxutils import escape
 from PIL import Image
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle
@@ -23,7 +24,9 @@ def generate_medical_pdf(
     notes: str = "",
     include_options: dict = None,
     model_info: dict = None,
-    heatmap_class: str = None
+    heatmap_class: str = None,
+    doctor_name: str = "",
+    doctor_site: str = ""
 ) -> bytes:
     """Génère un rapport PDF médical personnalisé en mémoire sous forme de bytes."""
     if include_options is None:
@@ -32,7 +35,8 @@ def generate_medical_pdf(
             "probabilities": True,
             "heatmap": True,
             "metrics": True,
-            "disclaimer": True
+            "disclaimer": True,
+            "doctor": True
         }
 
     buffer = io.BytesIO()
@@ -83,6 +87,11 @@ def generate_medical_pdf(
             [Paragraph(f"<b>Identifiant Patient :</b> {patient_id}", body_style), Paragraph(f"<b>Date d'Analyse :</b> {date_str}", body_style)],
             [Paragraph(f"<b>Diagnostic Estimé :</b> <font color='#047857'><b>{pred_class.upper()}</b></font>", body_style), Paragraph("<b>Modèle :</b> CNN optimisé (Optuna)", body_style)]
         ]
+        if include_options.get("doctor", True) and doctor_name:
+            medecin = f"<b>Médecin :</b> {escape(doctor_name)}"
+            if doctor_site:
+                medecin += f"<br/>{escape(doctor_site)}"
+            info_data.append([Paragraph(medecin, body_style), Paragraph("", body_style)])
         info_table = Table(info_data, colWidths=[270, 270])
         info_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F3F4F6')),
@@ -180,6 +189,22 @@ def generate_medical_pdf(
             table.setStyle(table_style)
             story.append(table)
             story.append(Spacer(1, 8))
+
+    # médecin et signature
+    if include_options.get("doctor", True) and (doctor_name or doctor_site):
+        story.append(Spacer(1, 10))
+        signataire = escape(doctor_name) if doctor_name else "Non précisé"
+        lignes = [[Paragraph(f"<b>Rapport généré par :</b> {signataire}", body_style),
+                   Paragraph("<b>Signature :</b>", body_style)]]
+        if doctor_site:
+            lignes.append([Paragraph(escape(doctor_site), body_style), Paragraph("", body_style)])
+        sig_table = Table(lignes, colWidths=[270, 270], rowHeights=[34] * len(lignes))
+        sig_table.setStyle(TableStyle([
+            ('BOX', (1,0), (1,-1), 0.5, colors.HexColor('#CBD5E1')),
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('PADDING', (0,0), (-1,-1), 8),
+        ]))
+        story.append(sig_table)
 
     # avertissement 
     if include_options.get("disclaimer"):
